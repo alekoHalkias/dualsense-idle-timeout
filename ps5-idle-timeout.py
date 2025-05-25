@@ -4,20 +4,55 @@ import os
 import time
 import subprocess
 import threading
+import dbus
 from evdev import InputDevice, list_devices, ecodes
 
-IDLE_TIMEOUT =  600      # seconds
+IDLE_TIMEOUT =  10     # seconds
 RESCAN_INTERVAL = 2    # seconds
 STICK_DRIFT_THRESHOLD = 10  # analog drift filter
 
 controller_threads = {}
 lock = threading.Lock()
 
-def log(msg, notify=False):
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ICON_PATH = os.path.join(SCRIPT_DIR, "dualsensewhite.svg")
+
+def send_dbus_notification(summary, body="", icon=ICON_PATH):
+    try:
+        session_bus = dbus.SessionBus()
+        notify_obj = session_bus.get_object("org.freedesktop.Notifications", "/org/freedesktop/Notifications")
+        notify = dbus.Interface(notify_obj, "org.freedesktop.Notifications")
+
+        if not os.path.exists(icon):
+            icon = ""
+
+        # Plasma doesn't show summary separately — emulate bold manually
+        full_body = f"<b>{summary}</b>\n{body}" if body else f"<b>{summary}</b>"
+
+        hints = dbus.Dictionary({
+            "urgency": dbus.Byte(1),
+            "category": "device",
+            "desktop-entry": "dualsense-idle-monitor"  # improves KDE integration
+        }, signature="sv")
+
+        notify.Notify(
+            "DualSense Idle Monitor",  # app name
+            0,
+            icon,
+            "",                         # KDE ignores summary; send empty
+            full_body,                 # manually constructed message
+            [],
+            hints,
+            -1
+        )
+    except Exception as e:
+        print(f"[{time.strftime('%H:%M:%S')}] ⚠️ D-Bus notification failed: {e}")
+
+def log(msg, notify=False,summary=""):
     timestamp= f"[{time.strftime('%H:%M:%S')}]"
     print(f"{timestamp} {msg}")
     if notify:
-        subprocess.run(["notify-send", "--app-name=Controller Monitor", "DualSense Idle Monitor", msg])
+        send_dbus_notification(summary, msg)
 
 # Find all known DualSense MACs from bluetoothctl
 def get_dualsense_macs():
@@ -95,7 +130,36 @@ def monitor_controller(dev_path, name, mac, stop_event):
     except OSError:
         log(f"🔌 Device {name} disconnected unexpectedly")
 
-    log(f"🛑 Finished monitoring {name}", notify=True)
+    log(f"🛑 Finished monitoring {name}", notify=True,summary="Disconnected")
+
+def get_battery_level(mac):
+    try:
+        mac = mac.lower()
+        devices = subprocess.run(["upower", "-e"], capture_output=True, text=True).stdout.splitlines()
+
+        for device in devices:
+            if "ps_controller_battery" in device:
+                info = subprocess.run(["upower", "-i", device.strip()], capture_output=True, text=True).stdout
+
+                found_mac = False
+                battery = "Unknown"
+
+                for line in info.splitlines():
+                    line = line.strip()
+                    if line.startswith("serial:"):
+                        serial_mac = line.split(":", 1)[1].strip().lower()
+                        if serial_mac == mac:
+                            found_mac = True
+
+                    if found_mac and line.startswith("percentage:"):
+                        battery = line.split(":", 1)[1].strip()
+                        return battery  # ✅ Done!
+
+        return "Unknown"
+
+    except Exception as e:
+        print(f"⚠️ Battery check failed: {e}")
+        return "Unknown"
 
 # Thread to monitor and assign threads to new controllers
 def scan_loop():
@@ -110,7 +174,8 @@ def scan_loop():
                     t = threading.Thread(target=monitor_controller, args=(path, name, mac, stop_event), daemon=True)
                     controller_threads[path] = {"thread": t, "stop": stop_event}
                     t.start()
-                    log(f"✅ Started monitoring {name} ({mac})",notify=True)
+                    battery = get_battery_level(mac) if mac else "Unknown"
+                    log(f"✅ Started monitoring {name} ({mac}) — Battery: {battery}", notify=True, summary="Controller Connected")
 
             # Cleanup dead threads
             to_remove = []
@@ -123,8 +188,9 @@ def scan_loop():
 
         time.sleep(RESCAN_INTERVAL)
 
+
 if __name__ == "__main__":
-    log("🔍 Starting DualSense idle monitor...", notify=True)
+    log("🔍 Starting DualSense idle monitor...", notify=True,summary="Starting")
     try:
         scan_loop()
     except KeyboardInterrupt:
@@ -132,4 +198,4 @@ if __name__ == "__main__":
         with lock:
             for info in controller_threads.values():
                 info["stop"].set()
-    log("👋 Done.", notify=True)
+    log("👋 Done.", notify=True,summary="Closing process")

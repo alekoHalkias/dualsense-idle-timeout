@@ -1,6 +1,7 @@
 [Unit]
 Description=DualSense Idle Timeout Monitor
-After=graphical-session.target
+After=bluetooth.target graphical-session.target
+Requires=bluetooth.target
 
 [Service]
 Type=simple

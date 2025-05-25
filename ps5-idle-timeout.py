@@ -6,15 +6,18 @@ import subprocess
 import threading
 from evdev import InputDevice, list_devices, ecodes
 
-IDLE_TIMEOUT = 5       # seconds
+IDLE_TIMEOUT = 10       # seconds
 RESCAN_INTERVAL = 2    # seconds
 STICK_DRIFT_THRESHOLD = 10  # analog drift filter
 
 controller_threads = {}
 lock = threading.Lock()
 
-def log(msg):
-    print(f"[{time.strftime('%H:%M:%S')}] {msg}")
+def log(msg, notify=False):
+    timestamp= f"[{time.strftime('%H:%M:%S')}]"
+    print(f"{timestamp} {msg}")
+    if notify:
+        subprocess.run(["notify-send", "--app-name=Controller Monitor", "DualSense Idle Monitor", msg])
 
 # Find all known DualSense MACs from bluetoothctl
 def get_dualsense_macs():
@@ -92,7 +95,7 @@ def monitor_controller(dev_path, name, mac, stop_event):
     except OSError:
         log(f"🔌 Device {name} disconnected unexpectedly")
 
-    log(f"🛑 Finished monitoring {name}")
+    log(f"🛑 Finished monitoring {name}", notify=True)
 
 # Thread to monitor and assign threads to new controllers
 def scan_loop():
@@ -107,7 +110,7 @@ def scan_loop():
                     t = threading.Thread(target=monitor_controller, args=(path, name, mac, stop_event), daemon=True)
                     controller_threads[path] = {"thread": t, "stop": stop_event}
                     t.start()
-                    log(f"✅ Started monitoring {name} ({mac})")
+                    log(f"✅ Started monitoring {name} ({mac})",notify=True)
 
             # Cleanup dead threads
             to_remove = []
@@ -121,7 +124,7 @@ def scan_loop():
         time.sleep(RESCAN_INTERVAL)
 
 if __name__ == "__main__":
-    log("🔍 Starting DualSense idle monitor...")
+    log("🔍 Starting DualSense idle monitor...", notify=True)
     try:
         scan_loop()
     except KeyboardInterrupt:
@@ -129,4 +132,4 @@ if __name__ == "__main__":
         with lock:
             for info in controller_threads.values():
                 info["stop"].set()
-    log("👋 Done.")
+    log("👋 Done.", notify=True)

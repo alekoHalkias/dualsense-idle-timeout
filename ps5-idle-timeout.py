@@ -6,7 +6,7 @@ import subprocess
 import threading
 from evdev import InputDevice, list_devices, ecodes
 
-IDLE_TIMEOUT = 10       # seconds
+IDLE_TIMEOUT =  600      # seconds
 RESCAN_INTERVAL = 2    # seconds
 STICK_DRIFT_THRESHOLD = 10  # analog drift filter
 

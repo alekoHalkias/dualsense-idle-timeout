@@ -1,38 +1,25 @@
-#!/usr/bin/env bash
-
+#!/bin/bash
 set -e
 
 SCRIPT_NAME="ps5-idle-timeout"
 BIN_PATH="$HOME/.local/bin/$SCRIPT_NAME"
-SERVICE_PATH="$HOME/.config/systemd/user/$SCRIPT_NAME.service"
+INSTALL_DIR="$HOME/.local/share/$SCRIPT_NAME"
+SERVICE_DEST="$HOME/.config/systemd/user/$SCRIPT_NAME.service"
+CONFIG_DIR="$HOME/.config/$SCRIPT_NAME"
 
-echo "Uninstalling $SCRIPT_NAME..."
+echo "🗑️ Uninstalling $SCRIPT_NAME..."
 
-# Stop the systemd service if it's running
-if systemctl --user is-active --quiet "$SCRIPT_NAME.service"; then
-    echo "Stopping service..."
-    systemctl --user stop "$SCRIPT_NAME.service"
-fi
+# Stop and disable the systemd service
+systemctl --user disable --now "$SCRIPT_NAME.service" || true
 
-# Disable the service
-if systemctl --user is-enabled --quiet "$SCRIPT_NAME.service"; then
-    echo "Disabling service..."
-    systemctl --user disable "$SCRIPT_NAME.service"
-fi
+# Remove installed files
+rm -f "$BIN_PATH"
+rm -rf "$INSTALL_DIR"
+rm -f "$SERVICE_DEST"
+rm -rf "$CONFIG_DIR"
 
-# Remove systemd service file
-if [[ -f "$SERVICE_PATH" ]]; then
-    echo "Removing service file..."
-    rm -f "$SERVICE_PATH"
-fi
-
-# Remove script binary
-if [[ -f "$BIN_PATH" ]]; then
-    echo "Removing script from ~/.local/bin..."
-    rm -f "$BIN_PATH"
-fi
-
-# Reload systemd
+# Reload systemd user daemon
+systemctl --user daemon-reexec
 systemctl --user daemon-reload
 
-echo "Uninstall complete."
+echo "$SCRIPT_NAME removed."

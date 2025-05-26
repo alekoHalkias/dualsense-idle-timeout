@@ -36,6 +36,18 @@ def handle_cli_args(script_path):
         return True
 
     if args.daemon:
+        if os.path.exists(PID_FILE):
+            try:
+                with open(PID_FILE) as f:
+                    existing_pid = int(f.read().strip())
+                # Check if process is still running
+                os.kill(existing_pid, 0)
+                log(f"⚠️ Daemon already running (PID {existing_pid})", notify=True, summary="Already Running")
+                return True
+            except (ValueError, ProcessLookupError, PermissionError):
+                # PID file exists but process is not alive — continue to spawn new one
+                os.remove(PID_FILE)
+
         log("🔧 Starting in daemon mode...", summary="Daemon")
         proc = subprocess.Popen(
             [sys.executable, script_path],

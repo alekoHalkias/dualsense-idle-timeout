@@ -30,14 +30,9 @@ def handle_cli_args(script_path):
 
     if args.status:
         print("🎮 Controller Status\n")
-        idle_data = get_idle_times()
         for path, name, mac in find_dualsense_event_devices():
             battery = get_battery_level(mac) if mac else "Unknown"
-            idle_str = ""
-            if path in idle_data:
-                idle = idle_data[path]["idle_for"]
-                idle_str = f"— Idle: {idle:.1f}s"
-            print(f"• {name} ({mac or 'no MAC'}) — Battery: {battery} {idle_str}")
+            print(f"• {name} ({mac or 'no MAC'}) — Battery: {battery}")
         return True
 
     if args.daemon:

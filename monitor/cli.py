@@ -5,6 +5,8 @@ import sys
 import time
 import subprocess
 import argparse
+import socket
+import json
 
 from monitor.battery import get_battery_level
 from monitor.notif import log
@@ -29,10 +31,31 @@ def handle_cli_args(script_path):
         return True
 
     if args.status:
+        try:
+            import dbus
+            bus = dbus.SessionBus()
+            remote = bus.get_object("org.dualsense.Monitor", "/org/dualsense/Monitor")
+            iface = dbus.Interface(remote, "org.dualsense.Monitor")
+            data = json.loads(iface.GetStatus())
+        except Exception as e:
+            log(f"⚠️ Could not query D-Bus status: {e}")
+            data = {}
+
         print("🎮 Controller Status\n")
-        for path, name, mac in find_dualsense_event_devices():
-            battery = get_battery_level(mac) if mac else "Unknown"
-            print(f"• {name} ({mac or 'no MAC'}) — Battery: {battery}")
+        monitor_cfg = config["monitor"]
+        print(
+            f"🛠️  Config — idle_timeout: {monitor_cfg['idle_timeout']}s, "
+            f"rescan_interval: {monitor_cfg['rescan_interval']}s, "
+            f"drift_threshold: {monitor_cfg['stick_drift_threshold']}\n"
+        )
+
+        for path, info in data.items():
+            battery = info.get("battery", "Unknown")
+            idle = info.get("idle_for", 0)
+            timeout = int(config["monitor"]["idle_timeout"])
+            remaining = max(0, timeout - idle)
+            print(f"• {info['name']} ({info['mac']}) — Battery: {battery} — Idle timeout in: {remaining:.1f}s")
+
         return True
 
     if args.daemon:

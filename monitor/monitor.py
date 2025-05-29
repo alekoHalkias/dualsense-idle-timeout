@@ -6,10 +6,14 @@ from evdev import InputDevice, list_devices, ecodes
 from .battery import get_battery_level
 from .notif import log
 from .macs import get_dualsense_macs,get_mac_for_device,find_dualsense_event_devices
+from .config import load_config
+from .socket_server import start_socket_server, last_input_times
+from monitor.dbus_api import run_dbus_loop
 
-IDLE_TIMEOUT =  10     # seconds
-RESCAN_INTERVAL = 2    # seconds
-STICK_DRIFT_THRESHOLD = 10  # analog drift filter
+_config = load_config()
+IDLE_TIMEOUT = int(_config["monitor"]["idle_timeout"])
+RESCAN_INTERVAL = int(_config["monitor"]["rescan_interval"])
+STICK_DRIFT_THRESHOLD = int(_config["monitor"]["stick_drift_threshold"])
 
 controller_threads = {}
 lock = threading.Lock()
@@ -25,6 +29,8 @@ def monitor_controller(dev_path, name, mac, stop_event):
     last_input = time.time()
     abs_state = {}
     disconnected = False
+
+    last_input_times[dev_path] = last_input
 
     try:
         for event in dev.read_loop():
@@ -59,6 +65,8 @@ def monitor_controller(dev_path, name, mac, stop_event):
 
 # Thread to monitor and assign threads to new controllers
 def scan_loop():
+    # start_socket_server()
+    threading.Thread(target=run_dbus_loop, args=(collect_status,), daemon=True).start()
     while True:
         macs = get_dualsense_macs()
         devices = find_dualsense_event_devices()
@@ -68,7 +76,12 @@ def scan_loop():
                 if path not in controller_threads:
                     stop_event = threading.Event()
                     t = threading.Thread(target=monitor_controller, args=(path, name, mac, stop_event), daemon=True)
-                    controller_threads[path] = {"thread": t, "stop": stop_event}
+                    controller_threads[path] = {
+                        "thread": t,
+                        "stop": stop_event,
+                        "mac": mac,
+                        "name": name
+                    }
                     t.start()
                     battery = get_battery_level(mac) if mac else "Unknown"
                     log(f"✅ Started monitoring {name} ({mac}) — Battery: {battery}", notify=True, summary="Controller Connected")
@@ -83,6 +96,23 @@ def scan_loop():
                 del controller_threads[path]
 
         time.sleep(RESCAN_INTERVAL)
+
+def collect_status():
+    now = time.time()
+    status = {}
+    for path, info in controller_threads.items():
+        mac = info.get("mac", "unknown")
+        name = info.get("name", "Unknown Controller")
+        battery = get_battery_level(mac) if mac else "Unknown"
+        last = last_input_times.get(path, now)
+        idle = now - last
+        status[path] = {
+            "mac": mac,
+            "name": name,
+            "battery": battery,
+            "idle_for": round(idle, 1)
+        }
+    return status
 
 def shutdown_all_threads():
     with lock:

@@ -7,7 +7,7 @@ from .battery import get_battery_level
 from .notif import log
 from .macs import get_dualsense_macs,get_mac_for_device,find_dualsense_event_devices
 from .config import load_config
-from .socket_server import start_socket_server, last_input_times
+# from .socket_server import start_socket_server, last_input_times
 from monitor.dbus_api import run_dbus_loop
 
 _config = load_config()
@@ -17,6 +17,7 @@ STICK_DRIFT_THRESHOLD = int(_config["monitor"]["stick_drift_threshold"])
 
 controller_threads = {}
 lock = threading.Lock()
+last_input_times = {}
 
 def monitor_controller(dev_path, name, mac, stop_event):
     try:
@@ -43,10 +44,12 @@ def monitor_controller(dev_path, name, mac, stop_event):
                 abs_state[event.code] = event.value
                 if delta > STICK_DRIFT_THRESHOLD:
                     last_input = time.time()
+                    last_input_times[dev_path] = last_input  # ✅ critical for status
                     disconnected = False
 
             elif event.type == ecodes.EV_KEY:
                 last_input = time.time()
+                last_input_times[dev_path] = last_input  # ✅ update on keypress
                 disconnected = False
 
             if not disconnected and time.time() - last_input > IDLE_TIMEOUT:

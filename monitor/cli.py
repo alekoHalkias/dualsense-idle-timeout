@@ -13,17 +13,22 @@ from monitor.notif import log
 from monitor.monitor import scan_loop, shutdown_all_threads
 from monitor.macs import find_dualsense_event_devices
 from monitor.config import load_config
+from configparser import ConfigParser
+from monitor.config import HOME_CONFIG
 
 config = load_config()
 PID_FILE = os.path.expanduser("~/.cache/ps5-idle-timeout.pid")
 
 def handle_cli_args(script_path):
     parser = argparse.ArgumentParser(description="DualSense idle timeout monitor & battery checker")
-    parser.add_argument("--status", action="store_true", help="Show connected controller battery + MACs")
-    parser.add_argument("--version", action="store_true", help="Print version and exit")
-    parser.add_argument("--daemon", action="store_true", help="Run monitor in background (detached)")
-    parser.add_argument("--stop", action="store_true", help="Stop the background daemon")
-    parser.add_argument("--restart", action="store_true", help="Restart the script to reload config")
+    parser.add_argument("-s","--status", action="store_true", help="Show connected controller battery + MACs")
+    parser.add_argument("-v","--version", action="store_true", help="Print version and exit")
+    parser.add_argument("-d","--daemon", action="store_true", help="Run monitor in background (detached)")
+    parser.add_argument("-x","--stop", action="store_true", help="Stop the background daemon")
+    parser.add_argument("-r","--restart", action="store_true", help="Restart the script to reload config")
+    parser.add_argument("-t","--set-timeout", type=int, help="Set new idle timeout value (in seconds)")
+    parser.add_argument("-n","--notify-now", action="store_true", help="Send a desktop notification with current controller status")
+
     args = parser.parse_args()
 
     if args.version:
@@ -51,10 +56,17 @@ def handle_cli_args(script_path):
 
         for path, info in data.items():
             battery = info.get("battery", "Unknown")
+            charging = info.get("charging", False)
             idle = info.get("idle_for", 0)
             timeout = int(config["monitor"]["idle_timeout"])
-            remaining = max(0, timeout - idle)
-            print(f"• {info['name']} ({info['mac']}) — Battery: {battery} — Idle timeout in: {remaining:.1f}s")
+
+            if charging:
+                status_line = f"⚡ Charging — idle timer paused"
+            else:
+                remaining = max(0, timeout - idle)
+                status_line = f"Idle timeout in: {remaining:.1f}s"
+
+            print(f"• {info['name']} ({info['mac']}) — Battery: {battery} — {status_line}")
 
         return True
 
@@ -110,6 +122,33 @@ def handle_cli_args(script_path):
             close_fds=True,
             start_new_session=True
         )
+        return True
+
+    if args.set_timeout is not None:
+        new_config = ConfigParser()
+        if os.path.exists(HOME_CONFIG):
+                config.read(HOME_CONFIG)
+        else:
+                os.makedirs(os.path.dirname(HOME_CONFIG), exist_ok=True)
+
+        if not config.has_section("monitor"):
+                config.add_section("monitor")
+        config.set("monitor", "idle_timeout", str(args.set_timeout))
+        with open(HOME_CONFIG, "w") as f:
+                config.write(f)
+
+        log(f"✅ idle_timeout set to {args.set_timeout}s", notify=True, summary="Config Updated")
+        return True
+    
+    if args.notify_now:
+        try:
+            import dbus
+            bus = dbus.SessionBus()
+            remote = bus.get_object("org.dualsense.Monitor", "/org/dualsense/Monitor")
+            iface = dbus.Interface(remote, "org.dualsense.Monitor")
+            iface.SendStatusToast()
+        except Exception as e:
+            log(f"⚠️ Could not send status toast: {e}")
         return True
 
     return False  # no flags matched — run main loop

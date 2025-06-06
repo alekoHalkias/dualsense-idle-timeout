@@ -24,6 +24,30 @@ class StatusService(dbus.service.Object):
     def GetStatus(self):
         data = self.get_status_fn()
         return json.dumps(data)
+    @dbus.service.method(BUS_NAME, in_signature="", out_signature="s")
+    def SendStatusToast(self):
+        data = self.get_status_fn()
+        lines = []
+
+        for info in data.values():
+            name = info.get("name", "Controller")
+            battery = info.get("battery", "Unknown")
+            charging = info.get("charging", False)
+            idle = info.get("idle_for", 0)
+            mac = info.get("mac", "??")
+            timeout = int(os.environ.get("DUALSENSE_TIMEOUT", 60))
+
+            if charging:
+                status = "⚡ Charging"
+            else:
+                remaining = max(0, timeout - idle)
+                status = f"Idle in {remaining:.0f}s"
+
+            lines.append(f"{name} ({mac}) — {battery} — {status}")
+
+        from monitor.notif import send_dbus_notification
+        send_dbus_notification("🎮 DualSense Status", "\n".join(lines))
+        return "ok"
 
 def run_dbus_loop(get_status_fn):
     print("📡 D-Bus service starting...")

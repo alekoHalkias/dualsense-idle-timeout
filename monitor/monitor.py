@@ -3,11 +3,10 @@ import time
 import subprocess
 import threading
 from evdev import InputDevice, list_devices, ecodes
-from .battery import get_battery_level
+from .battery import get_battery_level,is_charging
 from .notif import log
 from .macs import get_dualsense_macs,get_mac_for_device,find_dualsense_event_devices
 from .config import load_config
-# from .socket_server import start_socket_server, last_input_times
 from monitor.dbus_api import run_dbus_loop
 
 _config = load_config()
@@ -18,7 +17,7 @@ STICK_DRIFT_THRESHOLD = int(_config["monitor"]["stick_drift_threshold"])
 controller_threads = {}
 lock = threading.Lock()
 last_input_times = {}
-
+last_charging_log = {}
 def monitor_controller(dev_path, name, mac, stop_event):
     try:
         dev = InputDevice(dev_path)
@@ -54,6 +53,18 @@ def monitor_controller(dev_path, name, mac, stop_event):
 
             if not disconnected and time.time() - last_input > IDLE_TIMEOUT:
                 if mac:
+                    charging = is_charging(mac)
+                    prev_charging = last_charging_log.get(dev_path)
+
+                    if charging != prev_charging:
+                        if charging:
+                            log(f"⚡ {name} is now charging — skipping idle disconnect")
+                        else:
+                            log(f"🔋 {name} is no longer charging — idle timer active")
+                        last_charging_log[dev_path] = charging
+
+                    if charging and _config["monitor"].getboolean("ignore_idle_when_charging"):
+                        continue
                     log(f"⚠️ {name} is idle, disconnecting {mac}")
                     subprocess.run(["bluetoothctl", "disconnect", mac])
                     disconnected = True
@@ -107,12 +118,14 @@ def collect_status():
         mac = info.get("mac", "unknown")
         name = info.get("name", "Unknown Controller")
         battery = get_battery_level(mac) if mac else "Unknown"
+        charging = is_charging(mac) if mac else False
         last = last_input_times.get(path, now)
         idle = now - last
         status[path] = {
             "mac": mac,
             "name": name,
             "battery": battery,
+            "charging": charging,
             "idle_for": round(idle, 1)
         }
     return status

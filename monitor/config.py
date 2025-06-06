@@ -12,20 +12,27 @@ DEFAULTS = {
     "monitor": {
         "idle_timeout": "60",
         "rescan_interval": "2",
-        "stick_drift_threshold": "10"
+        "stick_drift_threshold": "10",
+        "ignore_idle_when_charging": "true"
     },
     "app": {
-        "version": "1.0.0"
+        "version": "1.2.0"
     }
 }
 
 def load_config():
     config = configparser.ConfigParser()
-    config.read_dict(DEFAULTS)
+    config.read_dict(DEFAULTS)  # Load defaults first
 
     if os.path.exists(HOME_CONFIG):
         config.read(HOME_CONFIG)
-    elif os.path.exists(FALLBACK_CONFIG):
-        config.read(FALLBACK_CONFIG)
+
+    # Ensure all expected sections/keys are present
+    for section in DEFAULTS:
+        if not config.has_section(section):
+            config.add_section(section)
+        for key, value in DEFAULTS[section].items():
+            if not config.has_option(section, key):
+                config.set(section, key, value)
 
     return config

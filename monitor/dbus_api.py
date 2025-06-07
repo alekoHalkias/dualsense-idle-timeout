@@ -51,6 +51,26 @@ class StatusService(dbus.service.Object):
         return "ok"
     
     @dbus.service.method(BUS_NAME, in_signature="i", out_signature="s")
+    def SetTimeout(self, seconds):
+        from monitor.config import HOME_CONFIG, load_config
+        from configparser import ConfigParser
+        from monitor.notif import log
+
+        if not isinstance(seconds, int) or seconds < 5:
+            return "Invalid timeout value"
+
+        config = ConfigParser()
+        config.read(HOME_CONFIG)
+        if not config.has_section("monitor"):
+            config.add_section("monitor")
+        config.set("monitor", "idle_timeout", str(seconds))
+        with open(HOME_CONFIG, "w") as f:
+            config.write(f)
+
+        log(f"⏱️ Idle timeout updated to {seconds}s", notify=True, summary="Idle Timeout Changed")
+        return f"Idle timeout set to {seconds}s"
+
+    @dbus.service.method(BUS_NAME, in_signature="i", out_signature="s")
     def DisconnectByIndex(self, index):
         from monitor.monitor import controller_threads, lock
         import subprocess

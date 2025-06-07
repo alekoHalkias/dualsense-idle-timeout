@@ -21,13 +21,15 @@ PID_FILE = os.path.expanduser("~/.cache/ps5-idle-timeout.pid")
 
 def handle_cli_args(script_path):
     parser = argparse.ArgumentParser(description="DualSense idle timeout monitor & battery checker")
-    parser.add_argument("-s","--status", action="store_true", help="Show connected controller battery + MACs")
+    parser.add_argument("-s", "--status", nargs="?", const="all",metavar="", help="Show all controllers, or only one by player number (e.g., -s 1)")
     parser.add_argument("-v","--version", action="store_true", help="Print version and exit")
     parser.add_argument("-d","--daemon", action="store_true", help="Run monitor in background (detached)")
     parser.add_argument("-x","--stop", action="store_true", help="Stop the background daemon")
     parser.add_argument("-r","--restart", action="store_true", help="Restart the script to reload config")
-    parser.add_argument("-t","--set-timeout", type=int, help="Set new idle timeout value (in seconds)")
+    parser.add_argument("-t","--set-timeout", type=int, help="Set new idle timeout value (in seconds)", metavar=" ")
     parser.add_argument("-n","--notify-now", action="store_true", help="Send a desktop notification with current controller status")
+    parser.add_argument("-k","--disconnect", type=int, help="Disconnect controller by index (e.g., 1 for Player 1)", metavar=" ")
+
 
     args = parser.parse_args()
 
@@ -35,7 +37,7 @@ def handle_cli_args(script_path):
         print(f"ps5-idle-timeout version {config['app']['version']}")
         return True
 
-    if args.status:
+    if args.status is not None:
         try:
             import dbus
             bus = dbus.SessionBus()
@@ -54,7 +56,19 @@ def handle_cli_args(script_path):
             f"drift_threshold: {monitor_cfg['stick_drift_threshold']}\n"
         )
 
+        # Handle player number filter if one was passed
+        player_filter = None
+        if args.status != "all":
+            try:
+                player_filter = int(args.status)
+            except ValueError:
+                log("⚠️ Invalid player number for --status")
+                return True
+
         for path, info in data.items():
+            if player_filter is not None and info.get("player") != player_filter:
+                continue
+
             battery = info.get("battery", "Unknown")
             charging = info.get("charging", False)
             idle = info.get("idle_for", 0)
@@ -66,7 +80,7 @@ def handle_cli_args(script_path):
                 remaining = max(0, timeout - idle)
                 status_line = f"Idle timeout in: {remaining:.1f}s"
 
-            print(f"• {info['name']} ({info['mac']}) — Battery: {battery} — {status_line}")
+            print(f"• Player {info['player']}: {info['name']} ({info['mac']}) — Battery: {battery} — {status_line}")
 
         return True
 
@@ -149,6 +163,18 @@ def handle_cli_args(script_path):
             iface.SendStatusToast()
         except Exception as e:
             log(f"⚠️ Could not send status toast: {e}")
+        return True
+
+    if args.disconnect is not None:
+        try:
+            import dbus
+            bus = dbus.SessionBus()
+            remote = bus.get_object("org.dualsense.Monitor", "/org/dualsense/Monitor")
+            iface = dbus.Interface(remote, "org.dualsense.Monitor")
+            result = iface.DisconnectByIndex(args.disconnect)
+            print(result)
+        except Exception as e:
+            log(f"⚠️ Could not disconnect by index: {e}")
         return True
 
     return False  # no flags matched — run main loop

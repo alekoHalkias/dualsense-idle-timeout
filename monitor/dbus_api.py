@@ -24,6 +24,7 @@ class StatusService(dbus.service.Object):
     def GetStatus(self):
         data = self.get_status_fn()
         return json.dumps(data)
+
     @dbus.service.method(BUS_NAME, in_signature="", out_signature="s")
     def SendStatusToast(self):
         data = self.get_status_fn()
@@ -48,6 +49,29 @@ class StatusService(dbus.service.Object):
         from monitor.notif import send_dbus_notification
         send_dbus_notification("🎮 DualSense Status", "\n".join(lines))
         return "ok"
+    
+    @dbus.service.method(BUS_NAME, in_signature="i", out_signature="s")
+    def DisconnectByIndex(self, index):
+        from monitor.monitor import controller_threads, lock
+        import subprocess
+        from monitor.notif import log
+
+        with lock:
+            for info in controller_threads.values():
+                if info.get("player") == index:
+                    mac = info.get("mac")
+                    name = info.get("name", "Unknown")
+                    if not mac:
+                        return f"{name} has no MAC — cannot disconnect"
+
+                    try:
+                        subprocess.run(["bluetoothctl", "disconnect", mac], check=True)
+                        log(f"🔌 Disconnected {name} (Player {index})", notify=True, summary="Disconnected")
+                        return f"Disconnected {name} (Player {index})"
+                    except subprocess.CalledProcessError as e:
+                        return f"Failed to disconnect Player {index}: {e}"
+
+        return f"No controller found at index {index}"
 
 def run_dbus_loop(get_status_fn):
     print("📡 D-Bus service starting...")

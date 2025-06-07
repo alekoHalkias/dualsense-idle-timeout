@@ -18,6 +18,7 @@ controller_threads = {}
 lock = threading.Lock()
 last_input_times = {}
 last_charging_log = {}
+
 def monitor_controller(dev_path, name, mac, stop_event):
     try:
         dev = InputDevice(dev_path)
@@ -88,13 +89,15 @@ def scan_loop():
         with lock:
             for path, name, mac in devices:
                 if path not in controller_threads:
+                    player_number = len(controller_threads) + 1 
                     stop_event = threading.Event()
                     t = threading.Thread(target=monitor_controller, args=(path, name, mac, stop_event), daemon=True)
                     controller_threads[path] = {
                         "thread": t,
                         "stop": stop_event,
                         "mac": mac,
-                        "name": name
+                        "name": name,
+                        "player":player_number
                     }
                     t.start()
                     battery = get_battery_level(mac) if mac else "Unknown"
@@ -124,6 +127,7 @@ def collect_status():
         status[path] = {
             "mac": mac,
             "name": name,
+            "player": info.get("player", "?"),
             "battery": battery,
             "charging": charging,
             "idle_for": round(idle, 1)

@@ -1,0 +1,22 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Qt Tray App",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+  		"mkdir -p build/Debug && clang++ -std=c++17 -Wall -g3 main.cpp -o build/Debug/tray `pkg-config --cflags --libs Qt6Widgets Qt6DBus` -Wl,-z,now"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/systray"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$gcc"]
+    }
+  ]
+}

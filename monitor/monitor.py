@@ -89,7 +89,7 @@ def scan_loop():
         with lock:
             for path, name, mac in devices:
                 if path not in controller_threads:
-                    player_number = len(controller_threads) + 1 
+                    player_number = len([t for t in controller_threads.values() if "player" in t]) + 1
                     stop_event = threading.Event()
                     t = threading.Thread(target=monitor_controller, args=(path, name, mac, stop_event), daemon=True)
                     controller_threads[path] = {
@@ -101,16 +101,14 @@ def scan_loop():
                     }
                     t.start()
                     battery = get_battery_level(mac) if mac else "Unknown"
-                    log(f"✅ Started monitoring {name} ({mac}) — Battery: {battery}", notify=True, summary="Controller Connected")
+                    log(f"✅ Player {player_number}: Monitoring {name} ({mac}) — Battery: {battery}", notify=True, summary="Controller Connected")
 
             # Cleanup dead threads
             to_remove = []
             for path, info in controller_threads.items():
                 if not info["thread"].is_alive():
                     info["stop"].set()
-                    to_remove.append(path)
-            for path in to_remove:
-                del controller_threads[path]
+                    player_number = len(controller_threads) + 1 
 
         time.sleep(RESCAN_INTERVAL)
 

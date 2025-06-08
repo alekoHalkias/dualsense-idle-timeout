@@ -44,12 +44,12 @@ def monitor_controller(dev_path, name, mac, stop_event):
                 abs_state[event.code] = event.value
                 if delta > STICK_DRIFT_THRESHOLD:
                     last_input = time.time()
-                    last_input_times[dev_path] = last_input  # ✅ critical for status
+                    last_input_times[dev_path] = last_input
                     disconnected = False
 
             elif event.type == ecodes.EV_KEY:
                 last_input = time.time()
-                last_input_times[dev_path] = last_input  # ✅ update on keypress
+                last_input_times[dev_path] = last_input
                 disconnected = False
 
             if not disconnected and time.time() - last_input > IDLE_TIMEOUT:
@@ -57,26 +57,39 @@ def monitor_controller(dev_path, name, mac, stop_event):
                     charging = is_charging(mac)
                     prev_charging = last_charging_log.get(dev_path)
 
-                    if charging != prev_charging:
+                    if prev_charging is not None and charging != prev_charging:
                         if charging:
                             log(f"⚡ {name} is now charging — skipping idle disconnect")
                         else:
                             log(f"🔋 {name} is no longer charging — idle timer active")
-                        last_charging_log[dev_path] = charging
+
+                    last_charging_log[dev_path] = charging
 
                     if charging and _config["monitor"].getboolean("ignore_idle_when_charging"):
                         continue
+
                     log(f"⚠️ {name} is idle, disconnecting {mac}")
-                    subprocess.run(["bluetoothctl", "disconnect", mac])
+                    result = subprocess.run(
+                        ["bluetoothctl", "disconnect", mac],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+
+                    if result.returncode == 0:
+                        log(f"🔌 Disconnected {name} ({mac})", notify=True, summary="Disconnected")
+                    else:
+                        log(f"⚠️ Failed to disconnect {name} ({mac}) (exit code {result.returncode})", notify=True, summary="Disconnect Failed")
+
                     disconnected = True
+                    return  # 🚪 Exit to prevent loop from running again
                 else:
                     log(f"⚠️ {name} idle but no MAC found — can't disconnect")
 
     except OSError:
-        log(f"🔌 Device {name} disconnected unexpectedly")
+        if not disconnected:
+            log(f"🔌 Device {name} disconnected unexpectedly")
 
-    log(f"🛑 Finished monitoring {name}", notify=True,summary="Disconnected")
-
+    log(f"🛑 Finished monitoring {name}", notify=True, summary="Disconnected")
 
 # Thread to monitor and assign threads to new controllers
 def scan_loop():
@@ -89,7 +102,11 @@ def scan_loop():
         with lock:
             for path, name, mac in devices:
                 if path not in controller_threads:
-                    player_number = len([t for t in controller_threads.values() if "player" in t]) + 1
+                    existing_players = {info["player"] for info in controller_threads.values()}
+                    player_number = 1
+                    while player_number in existing_players:
+                        player_number += 1
+
                     stop_event = threading.Event()
                     t = threading.Thread(target=monitor_controller, args=(path, name, mac, stop_event), daemon=True)
                     controller_threads[path] = {
@@ -100,15 +117,22 @@ def scan_loop():
                         "player":player_number
                     }
                     t.start()
+                    if mac:
+                        subprocess.run(["bluetoothctl", "trust", mac], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     battery = get_battery_level(mac) if mac else "Unknown"
                     log(f"✅ Player {player_number}: Monitoring {name} ({mac}) — Battery: {battery}", notify=True, summary="Controller Connected")
 
-            # Cleanup dead threads
             to_remove = []
             for path, info in controller_threads.items():
                 if not info["thread"].is_alive():
-                    info["stop"].set()
-                    player_number = len(controller_threads) + 1 
+                    to_remove.append(path)
+
+            for path in to_remove:
+                del controller_threads[path]
+
+            # Reassign player numbers sequentially
+            for i, (path, info) in enumerate(sorted(controller_threads.items()), start=1):
+                info["player"] = i
 
         time.sleep(RESCAN_INTERVAL)
 

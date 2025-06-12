@@ -34,7 +34,7 @@ class StatusService(dbus.service.Object):
             name = info.get("name", "Controller")
             battery = info.get("battery", "Unknown")
             charging = info.get("charging", False)
-            idle = info.get("idle_for", 0)
+            idle = info.get("idle_remaining", 0)
             mac = info.get("mac", "??")
             timeout = int(os.environ.get("DUALSENSE_TIMEOUT", 60))
 

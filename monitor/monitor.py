@@ -3,14 +3,13 @@ import time
 import subprocess
 import threading
 from evdev import InputDevice, list_devices, ecodes
-from .battery import get_battery_level,is_charging
 from .notif import log
-from .macs import get_dualsense_macs,get_mac_for_device,find_dualsense_event_devices
+from .macs import get_dualsense_macs, get_mac_for_device, find_dualsense_event_devices
 from .config import load_config
 from monitor.dbus_api import run_dbus_loop
+from .battery import get_battery_level, is_charging
 
 _config = load_config()
-IDLE_TIMEOUT = int(_config["monitor"]["idle_timeout"])
 RESCAN_INTERVAL = int(_config["monitor"]["rescan_interval"])
 STICK_DRIFT_THRESHOLD = int(_config["monitor"]["stick_drift_threshold"])
 
@@ -19,10 +18,27 @@ lock = threading.Lock()
 last_input_times = {}
 last_charging_log = {}
 
+# Battery info cache to avoid repeated D-Bus calls
+_battery_cache = {}
+
+def get_idle_timeout():
+    return int(load_config()["monitor"]["idle_timeout"])
+
+def get_cached_battery_info(mac, ttl=10):
+    now = time.time()
+    entry = _battery_cache.get(mac)
+    if entry and now - entry['time'] < ttl:
+        return entry['battery'], entry['charging']
+
+    battery = get_battery_level(mac)
+    charging = is_charging(mac)
+    _battery_cache[mac] = {"time": now, "battery": battery, "charging": charging}
+    return battery, charging
+
 def monitor_controller(dev_path, name, mac, stop_event):
     try:
         dev = InputDevice(dev_path)
-        log(f"🕹️ Monitoring {name} ({mac}) at {dev_path}")
+        log(f"🔹 Monitoring {name} ({mac}) at {dev_path}")
     except Exception as e:
         log(f"❌ Could not open {dev_path}: {e}")
         return
@@ -42,6 +58,12 @@ def monitor_controller(dev_path, name, mac, stop_event):
                 prev = abs_state.get(event.code, event.value)
                 delta = abs(event.value - prev)
                 abs_state[event.code] = event.value
+
+                if event.code in (ecodes.ABS_HAT0X, ecodes.ABS_HAT0Y) and event.value != 0:
+                    last_input = time.time()
+                    last_input_times[dev_path] = last_input
+                    disconnected = False
+
                 if delta > STICK_DRIFT_THRESHOLD:
                     last_input = time.time()
                     last_input_times[dev_path] = last_input
@@ -52,16 +74,18 @@ def monitor_controller(dev_path, name, mac, stop_event):
                 last_input_times[dev_path] = last_input
                 disconnected = False
 
-            if not disconnected and time.time() - last_input > IDLE_TIMEOUT:
+            if not disconnected and time.time() - last_input > get_idle_timeout():
                 if mac:
-                    charging = is_charging(mac)
+                    battery, charging = get_cached_battery_info(mac)
                     prev_charging = last_charging_log.get(dev_path)
 
                     if prev_charging is not None and charging != prev_charging:
                         if charging:
                             log(f"⚡ {name} is now charging — skipping idle disconnect")
                         else:
-                            log(f"🔋 {name} is no longer charging — idle timer active")
+                            log(f"🔋 {name} is no longer charging — resetting idle timer")
+                            last_input = time.time()
+                            last_input_times[dev_path] = last_input
 
                     last_charging_log[dev_path] = charging
 
@@ -81,7 +105,7 @@ def monitor_controller(dev_path, name, mac, stop_event):
                         log(f"⚠️ Failed to disconnect {name} ({mac}) (exit code {result.returncode})", notify=True, summary="Disconnect Failed")
 
                     disconnected = True
-                    return  # 🚪 Exit to prevent loop from running again
+                    return
                 else:
                     log(f"⚠️ {name} idle but no MAC found — can't disconnect")
 
@@ -89,11 +113,9 @@ def monitor_controller(dev_path, name, mac, stop_event):
         if not disconnected:
             log(f"🔌 Device {name} disconnected unexpectedly")
 
-    log(f"🛑 Finished monitoring {name}", notify=True, summary="Disconnected")
+    log(f"🚑 Finished monitoring {name}", notify=True, summary="Disconnected")
 
-# Thread to monitor and assign threads to new controllers
 def scan_loop():
-    # start_socket_server()
     threading.Thread(target=run_dbus_loop, args=(collect_status,), daemon=True).start()
     while True:
         macs = get_dualsense_macs()
@@ -114,12 +136,12 @@ def scan_loop():
                         "stop": stop_event,
                         "mac": mac,
                         "name": name,
-                        "player":player_number
+                        "player": player_number
                     }
                     t.start()
                     if mac:
                         subprocess.run(["bluetoothctl", "trust", mac], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    battery = get_battery_level(mac) if mac else "Unknown"
+                    battery, _ = get_cached_battery_info(mac) if mac else ("Unknown", False)
                     log(f"✅ Player {player_number}: Monitoring {name} ({mac}) — Battery: {battery}", notify=True, summary="Controller Connected")
 
             to_remove = []
@@ -130,7 +152,6 @@ def scan_loop():
             for path in to_remove:
                 del controller_threads[path]
 
-            # Reassign player numbers sequentially
             for i, (path, info) in enumerate(sorted(controller_threads.items()), start=1):
                 info["player"] = i
 
@@ -139,20 +160,21 @@ def scan_loop():
 def collect_status():
     now = time.time()
     status = {}
+    timeout = get_idle_timeout()
     for path, info in controller_threads.items():
         mac = info.get("mac", "unknown")
         name = info.get("name", "Unknown Controller")
-        battery = get_battery_level(mac) if mac else "Unknown"
-        charging = is_charging(mac) if mac else False
+        battery, charging = get_cached_battery_info(mac) if mac else ("Unknown", False)
         last = last_input_times.get(path, now)
-        idle = now - last
+        idle = max(0, timeout - (now - last))
+        idle = min(timeout, idle)  # Clamp to valid range
         status[path] = {
             "mac": mac,
             "name": name,
             "player": info.get("player", "?"),
             "battery": battery,
             "charging": charging,
-            "idle_for": round(idle, 1)
+            "idle_remaining": round(idle, 1)
         }
     return status
 

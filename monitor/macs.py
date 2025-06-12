@@ -3,25 +3,39 @@ import subprocess
 import threading
 import time
 from evdev import InputDevice, list_devices, ecodes
-# from monitor.notif import send_dbus_notification, log
 
-IDLE_TIMEOUT =  10     # seconds
-RESCAN_INTERVAL = 2    # seconds
+IDLE_TIMEOUT = 10  # seconds
+RESCAN_INTERVAL = 2  # seconds
 STICK_DRIFT_THRESHOLD = 10  # analog drift filter
 
 controller_threads = {}
 lock = threading.Lock()
 
-# Find all known DualSense MACs from bluetoothctl
-def get_dualsense_macs():
-    output = subprocess.run(["bluetoothctl", "devices"], capture_output=True, text=True).stdout
-    return {
-        line.split()[1]: " ".join(line.split()[2:])
-        for line in output.splitlines()
-        if "DualSense" in line or "Wireless Controller" in line
-    }
+# Bluetooth MAC cache
+_last_bt_query = 0
+_bt_cache_ttl = 10  # seconds
+_bt_device_cache = {}
 
-# For a given /dev/input/eventX, get its MAC from sysfs (uniq)
+def get_dualsense_macs():
+    """Return a dictionary of MAC -> device name for DualSense devices, with caching."""
+    global _last_bt_query, _bt_device_cache
+    now = time.time()
+    if now - _last_bt_query < _bt_cache_ttl:
+        return _bt_device_cache
+
+    try:
+        output = subprocess.run(["bluetoothctl", "devices"], capture_output=True, text=True, check=True).stdout
+        _bt_device_cache = {
+            line.split()[1]: " ".join(line.split()[2:])
+            for line in output.splitlines()
+            if "DualSense" in line or "Wireless Controller" in line
+        }
+        _last_bt_query = now
+    except subprocess.CalledProcessError as e:
+        print(f"⚠️ Failed to query bluetoothctl: {e}")
+        # fallback: keep last cache
+    return _bt_device_cache
+
 def get_mac_for_device(dev_path):
     try:
         event_name = os.path.basename(dev_path)
@@ -34,7 +48,6 @@ def get_mac_for_device(dev_path):
         pass
     return None
 
-# Find all DualSense input devices + MACs
 def find_dualsense_event_devices():
     devices = []
     for path in list_devices():
@@ -46,3 +59,6 @@ def find_dualsense_event_devices():
         except Exception:
             continue
     return devices
+
+def normalize_mac(mac):
+    return mac.strip().lower().replace("-", ":")

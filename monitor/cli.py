@@ -71,13 +71,13 @@ def handle_cli_args(script_path):
 
             battery = info.get("battery", "Unknown")
             charging = info.get("charging", False)
-            idle = info.get("idle_for", 0)
+            idle = info.get("idle_remaining", 0)
             timeout = int(config["monitor"]["idle_timeout"])
 
             if charging:
                 status_line = f"⚡ Charging — idle timer paused"
             else:
-                remaining = max(0, timeout - idle)
+                remaining = idle
                 status_line = f"Idle timeout in: {remaining:.1f}s"
 
             print(f"• Player {info['player']}: {info['name']} ({info['mac']}) — Battery: {battery} — {status_line}")

@@ -70,28 +70,42 @@ class StatusService(dbus.service.Object):
         log(f"⏱️ Idle timeout updated to {seconds}s", notify=True, summary="Idle Timeout Changed")
         return f"Idle timeout set to {seconds}s"
 
-    @dbus.service.method(BUS_NAME, in_signature="i", out_signature="s")
-    def DisconnectByIndex(self, index):
+    @dbus.service.method(BUS_NAME,
+                        in_signature='i',
+                        out_signature='s',
+                        async_callbacks=('dbus_callback', 'dbus_errback'))
+    def DisconnectByIndex(self, index, dbus_callback, dbus_errback):
+        import threading
         from monitor.monitor import controller_threads, lock
         import subprocess
         from monitor.notif import log
 
-        with lock:
-            for info in controller_threads.values():
-                if info.get("player") == index:
-                    mac = info.get("mac")
-                    name = info.get("name", "Unknown")
-                    if not mac:
-                        return f"{name} has no MAC — cannot disconnect"
+        def do_disconnect():
+            try:
+                with lock:
+                    for info in controller_threads.values():
+                        if info.get("player") == index:
+                            mac = info.get("mac")
+                            name = info.get("name", "Unknown")
+                            if not mac:
+                                dbus_callback(f"{name} has no MAC — cannot disconnect")
+                                return
 
-                    try:
-                        subprocess.run(["bluetoothctl", "disconnect", mac], check=True)
-                        log(f"🔌 Disconnected {name} (Player {index})", notify=True, summary="Disconnected")
-                        return f"Disconnected {name} (Player {index})"
-                    except subprocess.CalledProcessError as e:
-                        return f"Failed to disconnect Player {index}: {e}"
+                            try:
+                                subprocess.run(["bluetoothctl", "disconnect", mac], check=True)
+                                log(f"🔌 Disconnected {name} (Player {index})", notify=True, summary="Disconnected")
+                                dbus_callback(f"Disconnected {name} (Player {index})")
+                                return
+                            except subprocess.CalledProcessError as e:
+                                dbus_callback(f"Failed to disconnect Player {index}: {e}")
+                                return
 
-        return f"No controller found at index {index}"
+                dbus_callback(f"No controller found at index {index}")
+            except Exception as e:
+                dbus_errback(e)
+
+        threading.Thread(target=do_disconnect, daemon=True).start()
+
 
 def run_dbus_loop(get_status_fn):
     print("📡 D-Bus service starting...")

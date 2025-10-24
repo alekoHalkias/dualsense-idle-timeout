@@ -20,7 +20,7 @@ Also reports battery levels using UPower.
 Clone the repository and run the install script:
 
 ```bash
-git clone https://github.com/yourname/dualsense-idle-timeout.git
+git clone https://github.com/alekohalkias/dualsense-idle-timeout.git
 cd dualsense-idle-timeout
 ./install.sh
 
